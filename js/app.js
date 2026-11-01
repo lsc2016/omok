@@ -9,7 +9,7 @@
   // ---------- 설정 ----------
   const SETTINGS_KEY = 'omok.settings';
   const settings = Object.assign(
-    { mode: 'pvp', level: 'normal', humanColor: 'black' },
+    { mode: 'pvp', level: 'normal', humanColor: 'black', rule: 'free' },
     JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
   );
   const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -34,6 +34,9 @@
   }
   function onSettingsChange() {
     $('aiOptions').hidden = settings.mode !== 'ai';
+    $('ruleHint').textContent = settings.rule === 'renju'
+      ? '흑은 3-3, 4-4, 6목 자리에 둘 수 없어요. 백은 제한이 없어요.'
+      : '제한 없이 다섯 개 이상 이으면 이겨요.';
     saveSettings();
   }
   const LEVEL_NAME = { easy: '쉬움', normal: '보통', hard: '어려움' };
@@ -52,6 +55,8 @@
     human: BLACK,       // 컴퓨터 대전에서 내 돌 색
     level: 'normal',
     thinking: false,    // 컴퓨터가 생각 중
+    renju: false,
+    forbidden: null,    // 금수 X 표시 중인 칸
   };
   let aiToken = 0;      // 무르기·새 게임 때 생각 중인 수를 버리기 위한 번호
 
@@ -63,6 +68,8 @@
     game.vsAI = settings.mode === 'ai';
     game.human = settings.humanColor === 'white' ? WHITE : BLACK;
     game.level = settings.level;
+    game.renju = settings.rule === 'renju';
+    game.forbidden = null;
     game.board = Rules.createBoard();
     game.moves = [];
     game.turn = BLACK;
@@ -77,6 +84,10 @@
     maybeAIMove();
   }
 
+  function isForbiddenHere(x, y) {
+    return game.renju && game.turn === BLACK && Rules.isForbidden(game.board, x, y);
+  }
+
   function canPlay(x, y) {
     return !game.over && game.board[y * SIZE + x] === EMPTY;
   }
@@ -87,7 +98,8 @@
     game.moves.push({ x, y, color });
     game.pending = null;
 
-    const line = Rules.findWin(game.board, x, y, color, false);
+    game.forbidden = null;
+    const line = Rules.findWin(game.board, x, y, color, game.renju && color === BLACK);
     if (line) {
       endGame(color, line);
     } else if (game.moves.length === SIZE * SIZE) {
@@ -122,7 +134,7 @@
   }
 
   function aiOptions() {
-    return { renju: false };
+    return { renju: game.renju };
   }
 
   function endGame(winner, line) {
@@ -159,9 +171,11 @@
     game.winner = 0;
     game.winLine = null;
     game.pending = null;
+    game.forbidden = null;
     hideModal();
     updateUI();
-    draw();  maybeAIMove();
+    draw();
+    maybeAIMove();
   }
 
   // ---------- 화면 전환 ----------
@@ -204,7 +218,7 @@
     }
     $('undoBtn').disabled = !canUndo();
     const modeText = game.vsAI ? `컴퓨터와 하기 · ${LEVEL_NAME[game.level]}` : '둘이서 하기';
-    $('info').textContent = `${modeText} · 자유 규칙`;
+    $('info').textContent = `${modeText} · ${game.renju ? '렌주 규칙' : '자유 규칙'}`;
   }
 
   function showModal() {
@@ -375,11 +389,37 @@
       ctx.shadowBlur = 0;
     }
 
-    // 미리 보기 (흐린 돌)
+    // 미리 보기 (흐린 돌) — 금수 자리면 X
     const ghost = game.pending || game.hover;
     if (ghost && canPlay(ghost.x, ghost.y) && !isAITurn()) {
-      drawStone(ghost.x, ghost.y, game.turn, game.pending ? 0.55 : 0.35);
+      if (isForbiddenHere(ghost.x, ghost.y)) drawX(ghost.x, ghost.y, 0.45);
+      else drawStone(ghost.x, ghost.y, game.turn, game.pending ? 0.55 : 0.35);
     }
+    if (game.forbidden) drawX(game.forbidden.x, game.forbidden.y, 1);
+  }
+
+  function drawX(x, y, alpha) {
+    const cx = pos(x), cy = pos(y), r = cell * 0.3;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#d61f1f';
+    ctx.lineWidth = Math.max(2.5, cell * 0.12);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+    ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  let forbiddenTimer = 0;
+  function showForbidden(x, y) {
+    game.forbidden = { x, y };
+    game.pending = null;
+    toast(`금수예요 (${Rules.forbiddenReason(game.board, x, y)}) · 흑은 여기에 둘 수 없어요`, 1800);
+    draw();
+    clearTimeout(forbiddenTimer);
+    forbiddenTimer = setTimeout(() => { game.forbidden = null; draw(); }, 1800);
   }
 
   // ---------- 입력 (마우스·터치) ----------
@@ -423,6 +463,10 @@
     if (game.board[y * SIZE + x] !== EMPTY) {
       game.pending = null;
       draw();
+      return;
+    }
+    if (isForbiddenHere(x, y)) {
+      showForbidden(x, y);
       return;
     }
     // 마우스는 바로 놓기, 터치는 미리 보기 → 같은 자리 한 번 더 누르면 확정

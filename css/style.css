@@ -202,7 +202,10 @@ button { font: inherit; color: inherit; }
   font-size: 14px;
   padding: 8px 14px;
   border-radius: 20px;
-  white-space: nowrap;
+  max-width: 92%;
+  width: max-content;
+  text-align: center;
+  line-height: 1.4;
   pointer-events: none;
   opacity: 0;
   transition: opacity .2s, transform .2s;

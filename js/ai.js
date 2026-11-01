@@ -124,8 +124,17 @@ const AI = (() => {
 
   // 렌주 규칙이면 흑의 금수 자리는 둘 수 없음
   function legal(b, p, color, opts) {
-    if (!opts.renju || color !== BLACK || !Rules.isForbidden) return true;
-    return !Rules.isForbidden(b, p % SIZE, (p / SIZE) | 0);
+    if (!opts.renju || color !== BLACK) return true;
+    const x = p % SIZE, y = (p / SIZE) | 0;
+    // 빠른 거르기: 3 이상인 방향이 둘 미만이고 한 줄 4-4·6목 가능성도 없으면 금수 아님
+    let strong = 0;
+    for (const [dx, dy] of DIRS) {
+      const sh = shapeAt(b, x, y, dx, dy, BLACK);
+      if (sh === OPEN4 || sh === FIVE) { strong = 2; break; }
+      if (sh >= OPEN3) strong++;
+    }
+    if (strong < 2) return true;
+    return !Rules.isForbidden(b, x, y);
   }
 
   // 정말 다섯이 되는지 (렌주 흑은 정확히 다섯)
