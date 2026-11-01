@@ -9,7 +9,7 @@
   // ---------- 설정 ----------
   const SETTINGS_KEY = 'omok.settings';
   const settings = Object.assign(
-    { mode: 'pvp' },
+    { mode: 'pvp', level: 'normal', humanColor: 'black' },
     JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
   );
   const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
@@ -32,7 +32,11 @@
       refresh();
     });
   }
-  function onSettingsChange() { saveSettings(); }
+  function onSettingsChange() {
+    $('aiOptions').hidden = settings.mode !== 'ai';
+    saveSettings();
+  }
+  const LEVEL_NAME = { easy: '쉬움', normal: '보통', hard: '어려움' };
 
   // ---------- 게임 상태 ----------
   const game = {
@@ -44,9 +48,21 @@
     winLine: null,
     pending: null,      // 터치: 미리 보기 중인 칸
     hover: null,        // 마우스: 올려 둔 칸
+    vsAI: false,
+    human: BLACK,       // 컴퓨터 대전에서 내 돌 색
+    level: 'normal',
+    thinking: false,    // 컴퓨터가 생각 중
   };
+  let aiToken = 0;      // 무르기·새 게임 때 생각 중인 수를 버리기 위한 번호
+
+  const isAITurn = () => game.vsAI && !game.over && game.turn !== game.human;
 
   function newGame() {
+    aiToken++;
+    game.thinking = false;
+    game.vsAI = settings.mode === 'ai';
+    game.human = settings.humanColor === 'white' ? WHITE : BLACK;
+    game.level = settings.level;
     game.board = Rules.createBoard();
     game.moves = [];
     game.turn = BLACK;
@@ -58,6 +74,7 @@
     hideModal();
     updateUI();
     draw();
+    maybeAIMove();
   }
 
   function canPlay(x, y) {
@@ -80,6 +97,32 @@
     }
     updateUI();
     draw();
+    maybeAIMove();
+  }
+
+  // ---------- 컴퓨터 차례 ----------
+  function maybeAIMove() {
+    if (!isAITurn() || game.thinking) return;
+    game.thinking = true;
+    updateUI();
+    const token = ++aiToken;
+    const started = performance.now();
+    // 화면이 먼저 그려지도록 잠깐 쉬었다가 생각
+    setTimeout(() => {
+      if (token !== aiToken) return;
+      const move = AI.chooseMove(game.board, game.turn, game.level, aiOptions());
+      const wait = Math.max(0, 350 - (performance.now() - started));
+      setTimeout(() => {
+        if (token !== aiToken) return;
+        game.thinking = false;
+        if (move) place(move.x, move.y);
+        else updateUI();
+      }, wait);
+    }, 60);
+  }
+
+  function aiOptions() {
+    return { renju: false };
   }
 
   function endGame(winner, line) {
@@ -90,18 +133,35 @@
     setTimeout(() => { if (game.over) showModal(); }, line ? 700 : 300);
   }
 
-  function undo() {
-    if (!game.moves.length) return;
+  function canUndo() {
+    if (game.vsAI) return game.moves.some((m) => m.color === game.human);
+    return game.moves.length > 0;
+  }
+
+  function popMove() {
     const m = game.moves.pop();
     game.board[m.y * SIZE + m.x] = EMPTY;
     game.turn = m.color;
+  }
+
+  function undo() {
+    if (!canUndo()) return;
+    if (game.vsAI) {
+      // 컴퓨터 수와 내 수를 함께 무르기
+      aiToken++;
+      game.thinking = false;
+      while (game.moves[game.moves.length - 1].color !== game.human) popMove();
+      popMove();
+    } else {
+      popMove();
+    }
     game.over = false;
     game.winner = 0;
     game.winLine = null;
     game.pending = null;
     hideModal();
     updateUI();
-    draw();
+    draw();  maybeAIMove();
   }
 
   // ---------- 화면 전환 ----------
@@ -112,6 +172,8 @@
   }
 
   function goHome() {
+    aiToken++;
+    game.thinking = false;
     hideModal();
     showScreen('home');
   }
@@ -136,16 +198,23 @@
       text.textContent = game.winner ? `${colorName(game.winner)} 승리!` : '무승부';
     } else {
       setStone(stone, game.turn);
-      text.textContent = `${colorName(game.turn)} 차례`;
+      let who = '';
+      if (game.vsAI) who = game.turn === game.human ? ' (나)' : game.thinking ? ' · 컴퓨터 생각 중…' : ' (컴퓨터)';
+      text.textContent = `${colorName(game.turn)} 차례${who}`;
     }
-    $('undoBtn').disabled = game.moves.length === 0;
-    $('info').textContent = '둘이서 하기 · 자유 규칙';
+    $('undoBtn').disabled = !canUndo();
+    const modeText = game.vsAI ? `컴퓨터와 하기 · ${LEVEL_NAME[game.level]}` : '둘이서 하기';
+    $('info').textContent = `${modeText} · 자유 규칙`;
   }
 
   function showModal() {
     setStone($('resultStone'), game.winner);
     $('resultTitle').textContent = game.winner ? `${colorName(game.winner)} 승리!` : '무승부';
-    $('resultSub').textContent = game.winner ? '다섯 개를 먼저 이었어요.' : '판이 꽉 찼어요.';
+    let sub = game.winner ? '다섯 개를 먼저 이었어요.' : '판이 꽉 찼어요.';
+    if (game.vsAI && game.winner) {
+      sub = game.winner === game.human ? '축하해요! 컴퓨터를 이겼어요.' : '아쉬워요. 컴퓨터가 이겼어요.';
+    }
+    $('resultSub').textContent = sub;
     $('resultModal').hidden = false;
   }
   function hideModal() { $('resultModal').hidden = true; }
@@ -308,7 +377,7 @@
 
     // 미리 보기 (흐린 돌)
     const ghost = game.pending || game.hover;
-    if (ghost && canPlay(ghost.x, ghost.y)) {
+    if (ghost && canPlay(ghost.x, ghost.y) && !isAITurn()) {
       drawStone(ghost.x, ghost.y, game.turn, game.pending ? 0.55 : 0.35);
     }
   }
@@ -350,7 +419,7 @@
   let hintShown = false;
 
   function handleTap(x, y, isMouse) {
-    if (game.over) return;
+    if (game.over || isAITurn()) return;
     if (game.board[y * SIZE + x] !== EMPTY) {
       game.pending = null;
       draw();
