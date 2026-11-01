@@ -96,6 +96,7 @@
     const color = game.turn;
     game.board[y * SIZE + x] = color;
     game.moves.push({ x, y, color });
+    Sound.play(color);
     game.pending = null;
 
     game.forbidden = null;
@@ -433,6 +434,7 @@
   }
 
   canvas.addEventListener('pointerdown', (e) => {
+    Sound.unlock();
     down = { x: e.clientX, y: e.clientY, id: e.pointerId };
   });
 
@@ -486,6 +488,18 @@
   $('newBtn').addEventListener('click', newGame);
   $('againBtn').addEventListener('click', newGame);
   $('homeBtn').addEventListener('click', goHome);
+  $('viewBoardBtn').addEventListener('click', hideModal);
+  function refreshSoundBtn() {
+    const on = Sound.isEnabled();
+    const btn = $('soundBtn');
+    btn.textContent = on ? '🔊 소리 켬' : '🔇 소리 끔';
+    btn.setAttribute('aria-pressed', String(on));
+  }
+  $('soundBtn').addEventListener('click', () => {
+    Sound.setEnabled(!Sound.isEnabled());
+    refreshSoundBtn();
+  });
+  refreshSoundBtn();
   $('resultModal').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) hideModal(); // 바깥을 누르면 판 보기
   });

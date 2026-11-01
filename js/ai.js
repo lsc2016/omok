@@ -155,7 +155,14 @@ const AI = (() => {
       let d = pointScore(b, x, y, opp);
       // 상대가 흑이고 그 자리가 금수면 막을 필요 없음
       if (d >= 5000 && !legal(b, p, opp, opts)) d = 0;
-      list.push({ p, a, d, s: a + d * 0.85 });
+      // 붙어 있는 돌이 많을수록 조금 더 (같은 점수면 자연스러운 자리)
+      let near = 0;
+      for (let j = Math.max(0, y - 1); j <= Math.min(SIZE - 1, y + 1); j++) {
+        for (let i = Math.max(0, x - 1); i <= Math.min(SIZE - 1, x + 1); i++) {
+          if (b[j * SIZE + i] !== EMPTY) near++;
+        }
+      }
+      list.push({ p, a, d, s: a + d * 0.85 + near * 40 });
     }
     list.sort((m, n) => n.s - m.s);
     return list;
@@ -216,7 +223,7 @@ const AI = (() => {
     const legalList = list.filter((m) => legal(b, m.p, color, opts));
     if (!legalList.length) return -1;
     const top = legalList[0].s;
-    const ties = legalList.filter((m) => m.s >= top * 0.97);
+    const ties = legalList.filter((m) => m.s >= top * 0.995);
     return ties[(Math.random() * ties.length) | 0].p;
   }
 
@@ -258,11 +265,87 @@ const AI = (() => {
 
   class Timeout extends Error {}
 
+  // ---------- 연속 4로 이기는 길 찾기 (VCF) ----------
+  // p에 side 돌이 있을 때, 한 수 더 두면 다섯이 되는 빈칸들
+  function fiveSpotsThrough(b, p, side, opts) {
+    const x = p % SIZE, y = (p / SIZE) | 0;
+    const spots = [];
+    for (const [dx, dy] of DIRS) {
+      for (let k = -4; k <= 4; k++) {
+        if (!k) continue;
+        const i = x + dx * k, j = y + dy * k;
+        if (!Rules.inside(i, j)) continue;
+        const q = j * SIZE + i;
+        if (b[q] === EMPTY && !spots.includes(q) && makesFive(b, q, side, opts)) spots.push(q);
+      }
+    }
+    return spots;
+  }
+
+  function hasFiveSpot(b, side, opts) {
+    for (const p of nearbyEmpty(b, 1)) {
+      const x = p % SIZE, y = (p / SIZE) | 0;
+      for (const [dx, dy] of DIRS) {
+        if (shapeAt(b, x, y, dx, dy, side) === FIVE && makesFive(b, p, side, opts)) return true;
+      }
+    }
+    return false;
+  }
+
+  // side가 4를 계속 두어 이길 수 있으면 첫 수를 돌려줌 (없으면 -1)
+  function findVCF(b, side, opts, maxDepth, budget, deadline) {
+    const opp = Rules.other(side);
+    let nodes = 0;
+    function rec(depth) {
+      if (++nodes > budget || depth === 0) return -1;
+      if ((nodes & 15) === 0 && performance.now() > deadline) { nodes = budget + 1; return -1; }
+      for (const p of nearbyEmpty(b, 2)) {
+        const x = p % SIZE, y = (p / SIZE) | 0;
+        let four = false;
+        for (const [dx, dy] of DIRS) {
+          const sh = shapeAt(b, x, y, dx, dy, side);
+          if (sh === FOUR || sh === OPEN4) { four = true; break; }
+        }
+        if (!four || !legal(b, p, side, opts)) continue;
+        b[p] = side;
+        let win = false;
+        const spots = fiveSpotsThrough(b, p, side, opts);
+        if (spots.length >= 2) win = true;
+        else if (spots.length === 1) {
+          const q = spots[0];
+          if (!legal(b, q, opp, opts)) win = true; // 상대(흑)가 금수라 못 막음
+          else {
+            b[q] = opp;
+            // 막은 수로 상대가 다섯이 되거나, 상대에게 다섯 자리가 생기면 이 길은 실패
+            const oppFive = Rules.findWin(b, q % SIZE, (q / SIZE) | 0, opp, opts.renju && opp === BLACK);
+            if (!oppFive && !fiveSpotsThrough(b, q, opp, opts).length) win = rec(depth - 1) >= 0;
+            b[q] = EMPTY;
+          }
+        }
+        b[p] = EMPTY;
+        if (win) return p;
+        if (nodes > budget) return -1;
+      }
+      return -1;
+    }
+    if (hasFiveSpot(b, opp, opts)) return -1; // 상대가 먼저 다섯을 만들 수 있으면 의미 없음
+    return rec(maxDepth);
+  }
+
   function hard(b, color, opts) {
-    const deadline = performance.now() + (opts.timeLimit || 750);
+    const limit = opts.timeLimit || 700;
+    const start = performance.now();
+    const deadline = start + limit;
     const rootList = scoredMoves(b, color, opts);
     const u = urgentMove(b, rootList, color, opts);
     if (u >= 0) return u;
+
+    // 4를 연달아 두어 이기는 길이 있으면 그대로
+    for (const d of [1, 2, 3, 5, 8, 11]) {
+      const vcf = findVCF(b, color, opts, d, 2500, start + limit * 0.2);
+      if (vcf >= 0) return vcf;
+    }
+    const searchEnd = start + limit * 0.75;
 
     const rootMoves = [];
     for (const m of rootList) {
@@ -275,7 +358,7 @@ const AI = (() => {
     let nodes = 0;
 
     function negamax(side, depth, alpha, beta, ply) {
-      if ((++nodes & 63) === 0 && performance.now() > deadline) throw new Timeout();
+      if ((++nodes & 63) === 0 && performance.now() > searchEnd) throw new Timeout();
       if (depth === 0) return evaluate(b, side);
 
       const list = scoredMoves(b, side, opts);
@@ -330,6 +413,16 @@ const AI = (() => {
       }
     } catch (e) {
       if (!(e instanceof Timeout)) throw e;
+    }
+
+    // 고른 수 다음에 상대가 4를 연달아 두어 이기는 길이 생기는지 확인하고, 생기면 다른 후보로
+    const order = [bestMove, ...rootMoves.map((m) => m.p).filter((p) => p !== bestMove)];
+    for (const p of order) {
+      if (performance.now() > deadline) break;
+      b[p] = color;
+      const threat = findVCF(b, opp, opts, 8, 800, deadline);
+      b[p] = EMPTY;
+      if (threat < 0) return p;
     }
     return bestMove;
   }
