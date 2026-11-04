@@ -8,11 +8,22 @@
 
   // ---------- 설정 ----------
   const SETTINGS_KEY = 'omok.settings';
+  // 저장소를 못 쓰거나(사생활 보호 모드 등) 값이 깨졌으면 기본값으로 시작한다
+  function loadSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      return saved && typeof saved === 'object' ? saved : {};
+    } catch (e) {
+      return {};
+    }
+  }
   const settings = Object.assign(
     { mode: 'pvp', level: 'normal', humanColor: 'black', rule: 'free' },
-    JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')
+    loadSettings()
   );
-  const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  const saveSettings = () => {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* 저장 못 해도 게임은 계속 */ }
+  };
 
   function bindSegments() {
     document.querySelectorAll('.seg').forEach((seg) => {
