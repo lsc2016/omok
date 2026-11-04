@@ -3,7 +3,8 @@
 
 const Sound = (() => {
   const KEY = 'omok.sound';
-  let enabled = localStorage.getItem(KEY) !== 'off';
+  let enabled = true;
+  try { enabled = localStorage.getItem(KEY) !== 'off'; } catch (e) { /* 저장소를 못 쓰면 소리 켬 */ }
   let ctx = null;
   let noise = null;
 
@@ -62,7 +63,7 @@ const Sound = (() => {
 
   function setEnabled(on) {
     enabled = on;
-    localStorage.setItem(KEY, on ? 'on' : 'off');
+    try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) { /* 저장 못 해도 이번 판엔 적용 */ }
     if (on) ensure();
   }
 
